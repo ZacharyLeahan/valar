@@ -83,3 +83,11 @@ To list the available tests, run `pytest --collect-only`
 
 To execute the available tests, run `coverage run -m pytest`, followed by `coverage report` to generate the coverage report.
 Additionally run `coverage html` to generate a detailed report accessible through `./test/coverage_report/ingex.html`.
+
+
+## Generated-key tracking capacity
+
+The generated-key tracking buffer holds up to 256 entries; the pending generation
+queue remains limited to 50. This mitigates rejected new setups on operators
+servicing multiple ads or overlapping renewals. This is a bounded mitigation, not
+a guarantee of unlimited capacity. See the [incident and offline regression tests](docs/generated-key-buffer-incident.md).

@@ -344,7 +344,9 @@ class PartkeyManager(object):
         self.logger = logger
         self.algorand_client = algorand_client
         self.buffer_pending = PartkeyBuffer()
-        self.buffer_generated = PartkeyBuffer()
+        # Generated keys span multiple ads and contract renewals. Keep their
+        # tracking capacity separate from the pending generation queue.
+        self.buffer_generated = PartkeyBuffer(max_num_of_keys=256)
         self.busy_generating_partkey = False # Flag
 
 

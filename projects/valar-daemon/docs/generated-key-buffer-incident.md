@@ -1,36 +1,34 @@
-# Generated-key buffer capacity incident
+# Valar participation-key buffer exhaustion
 
-Title: valar_daemon 0.4.0 rejects new delegation setup at hardcoded 50-entry generated-key buffer limit
+**Confirmed fixed on 2026-11-01:** after the change and Valar restart, the daemon submitted participation keys for a previously blocked contract. The operator subsequently confirmed that staking setup worked.
 
-Observed on 2026-11-01, Python 3.12, Ubuntu Linux, synchronized Algorand mainnet node.
+## Failure
 
-Impact: new delegations cannot obtain participation keys before their setup deadline. Daemon remains running; process-level health checks do not detect this.
+In `valar_daemon` 0.4.0, the generated-key tracking buffer defaults to 50 entries. At capacity, `add_partkey_generation_request()` rejects new requests, causing delegation setup to time out even though the daemon is running and Algorand is synced.
 
-Logs repeatedly show:
+```text
 Generated buffer is full (50 partkeys).
-Partkey generation request denied for delco with ID <redacted>.
+Partkey generation request denied for delco with ID <contract-id>.
+```
 
-Code: PartkeyManager initializes both buffers with PartkeyBuffer(), whose default max_num_of_keys is 50. add_partkey_generation_request rejects work when buffer_generated.is_full(). Generated entries are retained until vote-last-valid passes. delete_scheduled_partkeys deletes node keys without immediately removing corresponding generated-buffer entries. The exact runtime buffer composition has not been inspected.
+## Fix
 
-Minimal reproduction: instantiate manager with mocked algod.status returning last-round 100; populate generated buffer with 50 distinct entries valid from round 1 to 1000; request a different key valid 101 to 900. Result is PARTKEY_GENERATION_REQUEST_FAIL_GENERATED_FULL (-4), regardless of available system resources.
+In `src/valar_daemon/PartkeyManager.py`, increase only the generated-key buffer:
 
-Local mitigation: initialize only buffer_generated with PartkeyBuffer(max_num_of_keys=256). Keep pending buffer at 50. Back up source and restart only Valar. Previously rejected requests were accepted after restart. Restart also rebuilds memory state, so the live recovery alone does not isolate capacity change from restart effects; the mocked reproduction does isolate the limit.
+```diff
+-self.buffer_generated = PartkeyBuffer()
++self.buffer_generated = PartkeyBuffer(max_num_of_keys=256)
+```
 
-Local source tests: original rejects at 50; patched accepts next request, preserves existing entries and pending capacity, rejects duplicate pending request, and enforces 256 generated entries.
+Back up the installed file, apply the change, and restart only `valar-daemon.service`. Keep the pending generation queue at 50; do not delete participation keys. Delegators whose setup deadline already expired must retry.
 
-Requested upstream review: make generated-key tracking capacity appropriate/configurable for multiple ads and renewals, reconcile tracking entries with removed keys safely, and expose actionable unhealthy status when setup cannot proceed. Increasing the limit is temporary mitigation and can be overwritten by package upgrades.
+## Validation
 
-Live verification: previously rejected contract parameters were successfully submitted at 11:33:23 UTC after the 11:31:43 UTC restart. Another previously rejected contract missed its setup deadline and was reported as not submitted at 11:32:33 UTC. No delegator wallet confirmation has been performed by the operator. Algorand remained synced, services stayed active, and a scheduled post-restart heartbeat succeeded.
-
-
-## Run the offline regression tests
-
-With the daemon runtime dependencies installed, from `projects/valar-daemon`:
+Three offline regression tests pass: requests succeed beyond 50 generated entries, duplicate pending requests are rejected, and both queue limits remain enforced. The original code reproduces the rejection at 50.
 
 ```bash
+# From projects/valar-daemon, with runtime dependencies installed:
 PYTHONPATH=src python -m unittest discover -s unit_tests -v
 ```
 
-This does not exercise LocalNet or wallet confirmation. The regression test fails
-on the original 50-entry initialization. The 256-entry mitigation remains finite;
-configurable capacity and stale-entry reconciliation need upstream review.
+This raises a finite limit; it does not resolve stale-entry retention. Package upgrades may overwrite the local patch. Upstream should consider configurable capacity and safe reconciliation of removed keys.
